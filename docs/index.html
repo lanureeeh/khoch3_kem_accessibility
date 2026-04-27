@@ -49,7 +49,9 @@
   });
 
   // Fixed startup view requested for KEM
-  const map = L.map('map', { center: [47.86065, 16.43607], zoom: 12, minZoom: 8, maxZoom: 18, layers: [osmBaseLayer] });
+  const INITIAL_CENTER = [47.86065, 16.43607];
+  const INITIAL_ZOOM = 12;
+  const map = L.map('map', { center: INITIAL_CENTER, zoom: INITIAL_ZOOM, minZoom: 8, maxZoom: 18, layers: [osmBaseLayer] });
   let baseLayerSwitched = false;
   function switchToFallbackBaseLayer() {
     if (baseLayerSwitched) return;
@@ -276,11 +278,11 @@
   zoomToKemControl.onAdd = function() {
     const btn = L.DomUtil.create('button', 'leaflet-control-zoom leaflet-bar');
     btn.innerHTML = 'Zoom to KEM';
-    btn.title = 'Zoom to KEM boundary';
+    btn.title = 'Return to initial KEM view';
     btn.style.cssText = 'width:auto;padding:6px 10px;font-size:12px;cursor:pointer;';
     L.DomEvent.on(btn, 'click', function(e) {
       L.DomEvent.stopPropagation(e);
-      if (kemBounds) map.fitBounds(kemBounds, { padding: [5, 5], maxZoom: 14 });
+      map.setView(INITIAL_CENTER, INITIAL_ZOOM);
     });
     return btn;
   };
