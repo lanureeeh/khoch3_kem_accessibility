@@ -148,8 +148,8 @@ def convert_boundary() -> None:
             continue
         try:
             gdf = gpd.read_file(path)
-            to_geojson(gdf, OUT_DIR / "boundary.geojson")
-            print(f"  OK: {path.name} -> boundary.geojson")
+            to_geojson(gdf, OUT_DIR / "kem_boundaries.geojson")
+            print(f"  OK: {path.name} -> kem_boundaries.geojson")
             return
         except Exception as exc:
             print(f"  FAIL boundary from {path.name}: {exc}")

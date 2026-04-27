@@ -60,9 +60,9 @@ if [ -f "$CLIP_BOUNDARY" ]; then
 fi
 
 if [ -f "$KEM_ROOT/boundaries/KEM_merged_dissolved.geojson" ]; then
-  rm -f "$OUT_DIR/boundary.geojson"
-  ogr2ogr -f GeoJSON "$OUT_DIR/boundary.geojson" "$KEM_ROOT/boundaries/KEM_merged_dissolved.geojson" -t_srs EPSG:4326
-  echo "OK: boundary -> boundary.geojson"
+  rm -f "$OUT_DIR/kem_boundaries.geojson"
+  ogr2ogr -f GeoJSON "$OUT_DIR/kem_boundaries.geojson" "$KEM_ROOT/boundaries/KEM_merged_dissolved.geojson" -t_srs EPSG:4326
+  echo "OK: boundary -> kem_boundaries.geojson"
 fi
 
 echo "Done. Files written to $OUT_DIR"
