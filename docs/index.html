@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>KEM Accessibility Map</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
+  <style>
+    html, body, #map { height: 100%; margin: 0; }
+    .legend { background: white; padding: 8px 12px; line-height: 1.3em; font-size: 14px; border: 1px solid #ccc; border-radius: 6px; box-shadow: 0 0 6px rgba(0,0,0,0.2); }
+    .leaflet-control-layers { background: rgba(255,255,255,0.95); border-radius: 6px; box-shadow: 0 1px 5px rgba(0,0,0,0.4); font-size: 0.9em; padding: 4px 6px; }
+    .leaflet-control-layers-expanded { padding: 8px; min-width: 280px; max-height: 80vh; overflow-y: auto; }
+    .leaflet-control-layers label { margin: 1px 0; padding: 2px; line-height: 1.2; cursor: pointer; display: block; }
+    .layer-divider { height: 1px; background-color: #ddd; margin: 8px 0; width: 100%; }
+    .section-title { font-weight: bold; font-size: 12px; color: #555; text-transform: uppercase; margin: 6px 0 4px 0; }
+    .info { padding: 6px 8px; font: 14px/16px Arial, Helvetica, sans-serif; background: rgba(255,255,255,0.9); box-shadow: 0 0 15px rgba(0,0,0,0.2); border-radius: 5px; }
+    .info-toggle { cursor: pointer; color: #0078A8; text-decoration: underline; background: none; border: none; padding: 0; font: inherit; margin: 0; }
+    .info-content { display: none; margin-top: 10px; }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
+<script>
+  const WALK_BREAKS = [0, 5, 10, 15, 20, 30, 999];
+  const WALK_COLORS = ['#ffffb2', '#fecc5c', '#fd8d3c', '#f03b20', '#bd0026', '#800026'];
+  const BIKE_BREAKS = [0, 2, 4, 10, 15, 999];
+  const BIKE_COLORS = ['#ffffb2', '#fecc5c', '#fd8d3c', '#f03b20', '#800026'];
+
+  function getColor(val, breaks, colors) {
+    if (val == null || isNaN(val)) return '#cccccc';
+    for (let i = 0; i < breaks.length - 1; i++) {
+      if (val >= breaks[i] && val < breaks[i + 1]) return colors[i];
+    }
+    return colors[colors.length - 1];
+  }
+
+  const osmBaseLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    maxZoom: 19,
+    subdomains: 'abc'
+  });
+  const fallbackBaseLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    subdomains: 'abcd',
+    maxZoom: 20
+  });
+
+  // Fixed startup view requested for KEM
+  const map = L.map('map', { center: [47.86065, 16.43607], zoom: 12, minZoom: 8, maxZoom: 18, layers: [osmBaseLayer] });
+  let baseLayerSwitched = false;
+  function switchToFallbackBaseLayer() {
+    if (baseLayerSwitched) return;
+    baseLayerSwitched = true;
+    if (map.hasLayer(osmBaseLayer)) map.removeLayer(osmBaseLayer);
+    map.addLayer(fallbackBaseLayer);
+    console.warn('OSM tiles failed to load, switched to fallback basemap.');
+  }
+  osmBaseLayer.on('tileerror', switchToFallbackBaseLayer);
+  map.createPane('networksPane'); map.getPane('networksPane').style.zIndex = 410;
+  map.createPane('boundaryPane'); map.getPane('boundaryPane').style.zIndex = 425;
+  map.createPane('destinationsPane'); map.getPane('destinationsPane').style.zIndex = 450;
+
+  const accessibilityLayerIds = [
+    'walk_charging_stations', 'walk_pt_stops', 'walk_schools', 'walk_kindergartens',
+    'bike_charging_stations', 'bike_pt_stops', 'bike_schools', 'bike_kindergartens'
+  ];
+  const accessibilityLayers = {};
+  let currentAccessibilityLayer = null;
+
+  let walkNetworkLayer = null;
+  let bikeNetworkLayer = null;
+  let chargingLayer = null;
+  let ptStopsLayer = null;
+  let schoolsLayer = null;
+  let kindergartensLayer = null;
+  let boundaryLayer = null;
+  let kemBounds = null;
+
+  const labels = {
+    charging_stations: 'Charging stations',
+    pt_stops: 'Public transit stops',
+    schools: 'Schools',
+    kindergartens: 'Kindergartens'
+  };
+
+  function loadAccessibilityLayer(id) {
+    const isWalk = id.startsWith('walk_');
+    const breaks = isWalk ? WALK_BREAKS : BIKE_BREAKS;
+    const colors = isWalk ? WALK_COLORS : BIKE_COLORS;
+    return fetch('data/' + id + '.geojson')
+      .then(r => r.json())
+      .then(geojson => L.geoJSON(geojson, {
+        style: function(feature) {
+          const p = feature.properties || {};
+          const tt = p.travel_time_min != null ? p.travel_time_min : p.travel_time;
+          return { fillColor: getColor(tt, breaks, colors), fillOpacity: 0.65, weight: 0 };
+        },
+        onEachFeature: function(feature, layer) {
+          const p = feature.properties || {};
+          const ttVal = p.travel_time_min != null ? p.travel_time_min : p.travel_time;
+          const tt = ttVal != null ? Number(ttVal).toFixed(1) : '—';
+          const parts = id.split('_');
+          const mode = parts[0] === 'walk' ? 'Walk' : 'Bike';
+          const key = parts.slice(1).join('_');
+          layer.bindPopup('<strong>' + mode + ' → ' + (labels[key] || key) + '</strong><br>Travel time: <strong>' + tt + ' min</strong>');
+        }
+      }));
+  }
+
+  function loadLineLayer(path, style) {
+    return fetch(path).then(r => r.json()).then(geojson => L.geoJSON(geojson, { style: style })).catch(() => L.layerGroup());
+  }
+
+  function loadPointLayer(path, color, radius) {
+    return fetch(path).then(r => r.json()).then(geojson => L.geoJSON(geojson, {
+      pointToLayer: function(feature, latlng) {
+        return L.circleMarker(latlng, { pane: 'destinationsPane', radius: radius, fillColor: color, color: '#333', weight: 1, fillOpacity: 0.8 });
+      },
+      onEachFeature: function(feature, layer) {
+        const p = feature.properties || {};
+        layer.bindPopup('<strong>' + (p.name || p.NAME || p.id || 'Destination') + '</strong>');
+      }
+    })).catch(() => L.layerGroup());
+  }
+
+  Promise.all(accessibilityLayerIds.map(id => loadAccessibilityLayer(id).then(layer => { accessibilityLayers[id] = layer; })))
+    .then(function() {
+      currentAccessibilityLayer = accessibilityLayers['walk_charging_stations'];
+      if (currentAccessibilityLayer) map.addLayer(currentAccessibilityLayer);
+      const el = document.getElementById('acc-walk-charging');
+      if (el) el.checked = true;
+      updateLegendContent();
+    })
+    .catch(function(err) {
+      console.error('Failed loading accessibility layers. Run: python scripts/convert_gpkg_to_geojson.py', err);
+    });
+
+  loadLineLayer('data/walk_network.geojson', { pane: 'networksPane', color: '#2196F3', weight: 2, opacity: 0.6 }).then(l => { walkNetworkLayer = l; });
+  loadLineLayer('data/bike_network.geojson', { pane: 'networksPane', color: '#4CAF50', weight: 2, opacity: 0.6 }).then(l => { bikeNetworkLayer = l; });
+  loadPointLayer('data/charging_stations.geojson', '#E91E63', 5).then(l => { chargingLayer = l; });
+  loadPointLayer('data/pt_stops.geojson', '#9C27B0', 4).then(l => { ptStopsLayer = l; });
+  loadPointLayer('data/kindergartens.geojson', '#FF9800', 6).then(l => { kindergartensLayer = l; });
+  loadPointLayer('data/schools.geojson', '#00BCD4', 6).then(l => { schoolsLayer = l; });
+
+  function isPlausibleKemBounds(bounds) {
+    const sw = bounds.getSouthWest();
+    const ne = bounds.getNorthEast();
+    const lonSpan = ne.lng - sw.lng;
+    const latSpan = ne.lat - sw.lat;
+    const center = bounds.getCenter();
+    // KEM is in Austria; reject obviously wrong global/extreme extents.
+    if (lonSpan <= 0 || latSpan <= 0) return false;
+    if (lonSpan > 8 || latSpan > 5) return false;
+    if (center.lng < 10 || center.lng > 18) return false;
+    if (center.lat < 45 || center.lat > 49) return false;
+    return true;
+  }
+
+  fetch('data/kem_boundaries.geojson').then(r => r.json()).then(function(geojson) {
+    boundaryLayer = L.geoJSON(geojson, { style: { pane: 'boundaryPane', color: '#333', weight: 2, fillColor: '#fff', fillOpacity: 0.1, dashArray: '10, 5, 2, 5' } });
+    map.addLayer(boundaryLayer);
+    kemBounds = boundaryLayer.getBounds();
+    // Keep startup view fixed; boundary zoom is available via the "Zoom to KEM" button.
+  }).catch(() => {});
+
+  let legendDiv = null;
+  const legend = L.control({ position: 'bottomright' });
+  legend.onAdd = function() {
+    legendDiv = L.DomUtil.create('div', 'legend');
+    updateLegendContent();
+    return legendDiv;
+  };
+  legend.addTo(map);
+
+  function updateLegendContent() {
+    if (!legendDiv) return;
+    let isWalk = true;
+    for (const key of Object.keys(accessibilityLayers)) {
+      if (accessibilityLayers[key] === currentAccessibilityLayer) {
+        isWalk = key.startsWith('walk_');
+        break;
+      }
+    }
+    const breaks = isWalk ? WALK_BREAKS : BIKE_BREAKS;
+    const colors = isWalk ? WALK_COLORS : BIKE_COLORS;
+    let html = '<strong>Travel time (min) - ' + (isWalk ? 'Walking' : 'Cycling') + '</strong><br>';
+    for (let i = 0; i < breaks.length - 1; i++) {
+      html += '<i style="background:' + colors[i] + ';width:18px;height:12px;display:inline-block;margin-right:4px;"></i> ' + breaks[i] + (breaks[i + 1] === 999 ? '+' : '-' + breaks[i + 1]) + '<br>';
+    }
+    html += '<div style="margin-top:10px;padding-top:8px;border-top:1px solid #ccc;">';
+    html += '<strong>Networks</strong><br>';
+    html += '<i style="background:#2196F3;width:24px;height:3px;display:inline-block;margin-right:4px;vertical-align:middle;"></i> Walk network<br>';
+    html += '<i style="background:#4CAF50;width:24px;height:3px;display:inline-block;margin-right:4px;vertical-align:middle;"></i> Bike network<br>';
+    html += '<strong style="margin-top:6px;display:block;">Destinations</strong>';
+    html += '<i style="background:#E91E63;border:1px solid #333;width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:4px;vertical-align:middle;"></i> Charging stations<br>';
+    html += '<i style="background:#9C27B0;border:1px solid #333;width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px;vertical-align:middle;"></i> Public transit stops<br>';
+    html += '<i style="background:#FF9800;border:1px solid #333;width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:4px;vertical-align:middle;"></i> Kindergartens<br>';
+    html += '<i style="background:#00BCD4;border:1px solid #333;width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:4px;vertical-align:middle;"></i> Schools';
+    html += '</div>';
+    legendDiv.innerHTML = html;
+  }
+
+  const customLayerControl = L.control({ position: 'topright' });
+  customLayerControl.onAdd = function() {
+    const div = L.DomUtil.create('div', 'leaflet-control-layers leaflet-control-layers-expanded');
+    div.innerHTML = `
+      <div class="section-title">Accessibility (travel time to nearest)</div>
+      <label><input type="radio" name="acc" id="acc-walk-charging"> Walk -> Charging stations</label>
+      <label><input type="radio" name="acc" id="acc-walk-pt"> Walk -> Public transit stops</label>
+      <label><input type="radio" name="acc" id="acc-walk-schools"> Walk -> Schools</label>
+      <label><input type="radio" name="acc" id="acc-walk-kindergartens"> Walk -> Kindergartens</label>
+      <label><input type="radio" name="acc" id="acc-bike-charging"> Bike -> Charging stations</label>
+      <label><input type="radio" name="acc" id="acc-bike-pt"> Bike -> Public transit stops</label>
+      <label><input type="radio" name="acc" id="acc-bike-schools"> Bike -> Schools</label>
+      <label><input type="radio" name="acc" id="acc-bike-kindergartens"> Bike -> Kindergartens</label>
+      <div class="layer-divider"></div>
+      <div class="section-title">Networks</div>
+      <label><input type="checkbox" id="walk-net"> Walk network</label>
+      <label><input type="checkbox" id="bike-net"> Bike network</label>
+      <div class="layer-divider"></div>
+      <div class="section-title">Destinations</div>
+      <label><input type="checkbox" id="charging-layer" checked> Charging stations</label>
+      <label><input type="checkbox" id="pt-layer"> Public transit stops</label>
+      <label><input type="checkbox" id="kg-layer"> Kindergartens</label>
+      <label><input type="checkbox" id="school-layer"> Schools</label>
+      <div class="layer-divider"></div>
+      <label><input type="checkbox" id="bound-layer" checked> KEM boundary</label>
+    `;
+    L.DomEvent.disableClickPropagation(div);
+    return div;
+  };
+  customLayerControl.addTo(map);
+
+  setTimeout(function() {
+    const accIds = ['walk_charging_stations','walk_pt_stops','walk_schools','walk_kindergartens','bike_charging_stations','bike_pt_stops','bike_schools','bike_kindergartens'];
+    const radioIds = ['acc-walk-charging','acc-walk-pt','acc-walk-schools','acc-walk-kindergartens','acc-bike-charging','acc-bike-pt','acc-bike-schools','acc-bike-kindergartens'];
+    radioIds.forEach(function(rid, i) {
+      const r = document.getElementById(rid);
+      if (!r) return;
+      r.addEventListener('change', function() {
+        if (!this.checked) return;
+        const newLayer = accessibilityLayers[accIds[i]];
+        if (newLayer && currentAccessibilityLayer !== newLayer) {
+          if (currentAccessibilityLayer) map.removeLayer(currentAccessibilityLayer);
+          currentAccessibilityLayer = newLayer;
+          map.addLayer(currentAccessibilityLayer);
+          updateLegendContent();
+        }
+      });
+    });
+    document.getElementById('walk-net').addEventListener('change', function() { if (walkNetworkLayer) this.checked ? map.addLayer(walkNetworkLayer) : map.removeLayer(walkNetworkLayer); });
+    document.getElementById('bike-net').addEventListener('change', function() { if (bikeNetworkLayer) this.checked ? map.addLayer(bikeNetworkLayer) : map.removeLayer(bikeNetworkLayer); });
+    document.getElementById('charging-layer').addEventListener('change', function() { if (chargingLayer) this.checked ? map.addLayer(chargingLayer) : map.removeLayer(chargingLayer); });
+    document.getElementById('pt-layer').addEventListener('change', function() { if (ptStopsLayer) this.checked ? map.addLayer(ptStopsLayer) : map.removeLayer(ptStopsLayer); });
+    document.getElementById('kg-layer').addEventListener('change', function() { if (kindergartensLayer) this.checked ? map.addLayer(kindergartensLayer) : map.removeLayer(kindergartensLayer); });
+    document.getElementById('school-layer').addEventListener('change', function() { if (schoolsLayer) this.checked ? map.addLayer(schoolsLayer) : map.removeLayer(schoolsLayer); });
+    document.getElementById('bound-layer').addEventListener('change', function() { if (boundaryLayer) this.checked ? map.addLayer(boundaryLayer) : map.removeLayer(boundaryLayer); });
+  }, 500);
+
+  setTimeout(function() {
+    if (chargingLayer) map.addLayer(chargingLayer);
+  }, 800);
+
+  const geocoder = L.Control.geocoder({
+    defaultMarkGeocode: false,
+    position: 'topleft',
+    collapsed: true,
+    placeholder: 'Search place...'
+  }).addTo(map);
+  geocoder.on('markgeocode', function(e) { map.fitBounds(e.geocode.bbox); });
+
+  const zoomToKemControl = L.control({ position: 'topleft' });
+  zoomToKemControl.onAdd = function() {
+    const btn = L.DomUtil.create('button', 'leaflet-control-zoom leaflet-bar');
+    btn.innerHTML = 'Zoom to KEM';
+    btn.title = 'Zoom to KEM boundary';
+    btn.style.cssText = 'width:auto;padding:6px 10px;font-size:12px;cursor:pointer;';
+    L.DomEvent.on(btn, 'click', function(e) {
+      L.DomEvent.stopPropagation(e);
+      if (kemBounds) map.fitBounds(kemBounds, { padding: [5, 5], maxZoom: 14 });
+    });
+    return btn;
+  };
+  zoomToKemControl.addTo(map);
+
+  const infoContainer = L.control({ position: 'bottomleft' });
+  infoContainer.onAdd = function() {
+    const div = L.DomUtil.create('div', 'info');
+    div.innerHTML = `
+      <button class="info-toggle" tabindex="0">↑ Info</button>
+      <div class="info-content">
+        <h4>KEM Accessibility Map</h4>
+        <p>Travel time to nearest destinations by walking and cycling. Darker red means longer travel time.</p>
+        <p>Switch layers in the control and click grid cells for exact values.</p>
+      </div>
+    `;
+    const toggle = div.querySelector('.info-toggle');
+    const content = div.querySelector('.info-content');
+    toggle.addEventListener('click', function() {
+      const show = content.style.display !== 'block';
+      content.style.display = show ? 'block' : 'none';
+      toggle.textContent = show ? '↓ Info' : '↑ Info';
+    });
+    L.DomEvent.disableClickPropagation(div);
+    return div;
+  };
+  infoContainer.addTo(map);
+</script>
+</body>
+</html>
